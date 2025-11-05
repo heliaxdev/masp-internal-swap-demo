@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use group::GroupEncoding;
+use masp_note_encryption::ENC_CIPHERTEXT_SIZE;
+use masp_note_encryption::EphemeralKeyBytes;
+use masp_note_encryption::ExtractedCommitmentBytes;
+use masp_note_encryption::ShieldedOutput as NoteEncShieldedOutput;
 use masp_primitives::asset_type::AssetType;
 use masp_primitives::consensus::MainNetwork;
 use masp_primitives::memo::MemoBytes;
@@ -16,12 +21,12 @@ use masp_primitives::sapling::ViewingKey;
 use masp_primitives::sapling::keys::ExpandedSpendingKey;
 use masp_primitives::sapling::keys::FullViewingKey;
 use masp_primitives::sapling::keys::OutgoingViewingKey;
+use masp_primitives::sapling::note_encryption::SaplingDomain;
+use masp_primitives::sapling::note_encryption::sapling_note_encryption;
 use masp_primitives::sapling::note_encryption::{
     PreparedIncomingViewingKey, try_sapling_note_decryption,
 };
-use masp_primitives::transaction::Transaction;
 use masp_primitives::transaction::builder::Builder;
-use masp_primitives::transaction::components::OutputDescription;
 use masp_primitives::transaction::components::TxOut;
 use masp_primitives::transaction::components::amount::ValueSum;
 use masp_primitives::transaction::components::sapling::builder::RngBuildParams;
@@ -86,7 +91,7 @@ fn main() {
     // start with an empty tree
     let mut tree = CommitmentTree::<Node>::empty();
 
-    // let's credit some tokens to ay
+    // simulate bob depositing some tokens to ay
     let asset_y = AssetType::new(b"Asset Y").unwrap();
     let note_y = vk_ay
         .to_payment_address(DIVERSIFIER)
@@ -94,6 +99,28 @@ fn main() {
         .create_note(asset_y, 100, rseed(1))
         .unwrap();
     tree.append(note_y.commitment()).unwrap();
+
+    // make sure alice can see the tokens locked by bob
+    {
+        let note_encryption = sapling_note_encryption::<MainNetwork>(
+            None,
+            note_y,
+            vk_ay.to_payment_address(DIVERSIFIER).unwrap(),
+            MemoBytes::empty(),
+        );
+
+        let out = ShieldedOutput {
+            epk: EphemeralKeyBytes(note_encryption.epk().to_bytes()),
+            cmu: note_y.commitment().into_repr(),
+            ciphertext: note_encryption.encrypt_note_plaintext(),
+        };
+
+        let mut decrypted = trial_decrypt(&vk_ay, std::iter::once(&out));
+        assert_eq!(decrypted.len(), 1);
+
+        let (decrypted_note, _, _) = decrypted.remove(&0).unwrap();
+        assert_eq!(decrypted_note, note_y);
+    }
 
     // spend note in ay -- send it to alice
     let bundle = {
@@ -159,7 +186,12 @@ fn main() {
     }
 
     // trial decrypt bundle
-    let decrypted = trial_decrypt(&bundle, &vk_a);
+    let decrypted = trial_decrypt(
+        &vk_a,
+        bundle
+            .sapling_bundle()
+            .map_or(&vec![], |x| &x.shielded_outputs),
+    );
     println!("trial decrypted => {decrypted:#?}");
 }
 
@@ -225,38 +257,53 @@ fn partial_deauthorize(
     ))
 }
 
-fn trial_decrypt(
-    bundle: &Transaction,
+fn trial_decrypt<'so, I, O>(
     vk: &ViewingKey,
-) -> BTreeMap<usize, (Note, PaymentAddress, MemoBytes)> {
-    type Proof = OutputDescription<
-        <
-        <Authorized as Authorization>::SaplingAuth
-        as masp_primitives::transaction::components::sapling::Authorization
-        >::Proof
-    >;
-
+    shielded_outputs: I,
+) -> BTreeMap<usize, (Note, PaymentAddress, MemoBytes)>
+where
+    I: IntoIterator<Item = &'so O>,
+    O: NoteEncShieldedOutput<SaplingDomain<MainNetwork>, ENC_CIPHERTEXT_SIZE> + 'so,
+{
     let prepared = PreparedIncomingViewingKey::new(&vk.ivk());
 
-    bundle
-        .sapling_bundle()
-        .map_or(&vec![], |x| &x.shielded_outputs)
-        .iter()
-        .enumerate()
-        .fold(BTreeMap::new(), |mut accum, (note_pos_offset, so)| {
+    shielded_outputs.into_iter().enumerate().fold(
+        BTreeMap::new(),
+        |mut accum, (note_pos_offset, so)| {
             // Let's try to see if this viewing key can decrypt latest
             // note
             if let Some(decrypted) =
-                try_sapling_note_decryption::<_, Proof>(&MainNetwork, 1.into(), &prepared, so)
+                try_sapling_note_decryption(&MainNetwork, 1.into(), &prepared, so)
             {
                 accum.insert(note_pos_offset, decrypted);
             }
             accum
-        })
+        },
+    )
 }
 
 fn masp_params_path() -> &'static Path {
     // osx: /Users/$USER/Library/Application Support/MASPParams
     // linux: $HOME/.masp-params
     env!("MASP_PARAMS_PATH").as_ref()
+}
+
+struct ShieldedOutput {
+    epk: EphemeralKeyBytes,
+    cmu: ExtractedCommitmentBytes,
+    ciphertext: [u8; ENC_CIPHERTEXT_SIZE],
+}
+
+impl NoteEncShieldedOutput<SaplingDomain<MainNetwork>, ENC_CIPHERTEXT_SIZE> for ShieldedOutput {
+    fn ephemeral_key(&self) -> EphemeralKeyBytes {
+        EphemeralKeyBytes(self.epk.0)
+    }
+
+    fn cmstar_bytes(&self) -> ExtractedCommitmentBytes {
+        self.cmu
+    }
+
+    fn enc_ciphertext(&self) -> &[u8; ENC_CIPHERTEXT_SIZE] {
+        &self.ciphertext
+    }
 }

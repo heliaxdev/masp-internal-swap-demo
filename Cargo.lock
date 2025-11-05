@@ -858,6 +858,8 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 name = "masp-internal-swap-demo"
 version = "0.1.0"
 dependencies = [
+ "group",
+ "masp_note_encryption",
  "masp_primitives",
  "masp_proofs",
  "rand_core",

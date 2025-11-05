@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+group = "0.13.0"
+masp_note_encryption = "3.0.9"
 masp_primitives = "3.0.9"
 masp_proofs = "3.0.9"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
