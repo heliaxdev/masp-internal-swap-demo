@@ -1,0 +1,65 @@
+We want to swap token X with token Y without leaving the MASP.
+We should be able to do this with an atomic swap protocol.
+
+Parties involved:
+=================
+- Alice (has X)
+- Bob (has Y)
+
+Alice wants Y, and Bob wants X.
+
+Initial setup:
+==============
+
+- Alice generates new spending keys
+    - $s_a := (ask_a, nsk_a)$
+    - $s_x := (ask_x, nsk_x)$
+- Bob generates new spending keys
+    - $s_b := (ask_b, nsk_b)$
+    - $s_y := (ask_y, nsk_y)$
+
+They both publish the associated viewing keys $(ak, nk)$.
+Moreover, they agree on a diversifier $d$ (this can be hardcoded
+by the protocol), which must yield a valid point $G_d$.
+
+Second phase:
+=============
+
+- Alice computes
+    - $vk_{bx} := (ak_b + ak_x, nk_b + nk_x)$
+    - $ivk_{bx} := ivk(vk_{bx})$
+    - $pa_{bx} := ivk(vk_{bx}) G_d$
+- Bob computes
+    - $vk_{ay} := (ak_a + ak_y, nk_a + nk_y)$
+    - $ivk_{ay} := ivk(vk_{ay})$
+    - $pa_{ay} := ivk(vk_{ay}) G_d$
+
+Then, Alice sends X to $pa_{bx}$, and Bob sends Y to $pa_{ay}$.
+
+Third phase:
+============
+
+Once Alice verifies a note with Y has been sent to $pa_{ay}$,
+with $ivk_{ay}$, she shares $s_x$ with Bob.
+
+Conversely, once Bob verifies a note with X has been sent to
+$pa_{bx}$, with $ivk_{bx}$, he shares $s_y$ with Alice.
+
+Since Alice doesn't know the value of $s_b$, she can't recover
+$s_{bx} = s_b + s_x$, in spite of knowing $s_x$.
+
+Conversely, since Bob doesn't know the value of $s_a$, he can't
+recover $s_{ay} = s_a + s_y$, in spite of knowing $s_y$.
+
+Downsides/upsides:
+==================
+
+There is no refund/abort flow, in case anyone fucks up or
+deliberately avoids sharing secrets. On the flip side, funds
+cannot be retrieved from either side without the counterparty's
+consent (by sharing secrets). Verification can happen asynchronously.
+
+Considerations:
+===============
+
+- One of the parties could be a bot, to facilitate automatic trades
