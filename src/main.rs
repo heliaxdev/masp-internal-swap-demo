@@ -257,5 +257,6 @@ fn trial_decrypt(
 
 fn masp_params_path() -> &'static Path {
     // osx: /Users/$USER/Library/Application Support/MASPParams
+    // linux: $HOME/.masp-params
     env!("MASP_PARAMS_PATH").as_ref()
 }
